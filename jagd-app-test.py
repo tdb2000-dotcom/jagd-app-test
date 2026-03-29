@@ -2,16 +2,18 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import pandas as pd
 
 # --- KONFIGURATION ---
-JSON_FILE = "jagd-app-test-86ac50eaf539.json"
+# Wir brauchen JSON_FILE nicht mehr, da wir st.secrets nutzen!
 SHEET_NAME = "jagd-app-test"
 
 
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 def connect_to_sheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_FILE, scope)
+    # Nutzt die Daten aus dem Streamlit-Tresor (Secrets)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets, scope)
     client = gspread.authorize(creds)
     return client.open(SHEET_NAME).sheet1
 
@@ -20,29 +22,19 @@ def connect_to_sheet():
 st.set_page_config(page_title="Jagd-Protokoll", page_icon="🦌")
 st.title("🦌 Digitales Jagdbuch")
 
-
-# Funktion zum Zurücksetzen des Formulars
-def reset_form():
-    st.session_state["datum"] = datetime.now()
-    st.session_state["uhrzeit"] = datetime.now().time()
-    st.session_state["wildart"] = "Reh"
-    st.session_state["kg"] = 0.0
-    st.session_state["notizen"] = ""
-
-
-# Formular-Start
+# Formular-Bereich
 with st.form("jagd_form", clear_on_submit=True):
     st.subheader("Neuer Eintrag")
 
     col1, col2 = st.columns(2)
-    datum = col1.date_input("Datum", datetime.now(), key="f_datum")
-    uhrzeit = col2.time_input("Uhrzeit", datetime.now(), key="f_uhrzeit")
+    datum = col1.date_input("Datum", datetime.now())
+    uhrzeit = col2.time_input("Uhrzeit", datetime.now())
 
     col3, col4 = st.columns(2)
-    wildart = col3.selectbox("Wildart", ["Reh", "Hirsch", "Wildschwein", "Fuchs", "Dachs", "Sonstiges"], key="f_wild")
-    kilogramm = col4.number_input("Kilogramm", min_value=0.0, step=0.1, key="f_kg")
+    wildart = col3.selectbox("Wildart", ["Reh", "Hirsch", "Wildschwein", "Fuchs", "Dachs", "Sonstiges"])
+    kilogramm = col4.number_input("Kilogramm", min_value=0.0, step=0.1)
 
-    notizen = st.text_area("Notizen", key="f_notiz")
+    notizen = st.text_area("Notizen")
 
     submit = st.form_submit_button("Eintrag speichern")
 
@@ -59,13 +51,24 @@ if submit:
                 notizen
             ]
             sheet.append_row(neue_zeile)
-
-            # Neue Erfolgsmeldung
             st.success("✅ Gratuliere zu deiner Jagd!")
             st.balloons()
-
-            # Da 'clear_on_submit=True' oben im Formular steht,
-            # werden die Felder beim nächsten Laden automatisch leer sein.
-
     except Exception as e:
-        st.error(f"Fehler: Bitte prüfe die Google Sheet Freigabe. Details: {e}")
+        st.error(f"Fehler: {e}")
+
+# --- ANZEIGE DER LETZTEN EINTRÄGE ---
+st.divider()
+st.subheader("Letzte Erlegungen")
+
+try:
+    sheet = connect_to_sheet()
+    # Holt alle Daten aus dem Sheet
+    data = sheet.get_all_records()
+    if data:
+        # Erstellt eine Tabelle (DataFrame) und zeigt die letzten 5 Zeilen
+        df = pd.DataFrame(data)
+        st.table(df.tail(5))
+    else:
+        st.info("Noch keine Einträge im Sheet gefunden.")
+except:
+    st.write("Lade Daten...")
