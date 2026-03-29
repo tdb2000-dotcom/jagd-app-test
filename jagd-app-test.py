@@ -1,8 +1,9 @@
 import streamlit as st
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
 from datetime import datetime
 import pandas as pd
+import json
 
 # --- KONFIGURATION ---
 SHEET_NAME = "jagd-app-test"
@@ -11,18 +12,44 @@ SHEET_NAME = "jagd-app-test"
 def connect_to_sheet():
     scope = [
         "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
     ]
     try:
-        # Secret als Dict laden und private_key \n fixen
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # Methode: über google-auth statt oauth2client
+        creds_dict = {
+            "type": st.secrets["gcp_service_account"]["type"],
+            "project_id": st.secrets["gcp_service_account"]["project_id"],
+            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
+            "private_key": st.secrets["gcp_service_account"]["private_key"].replace("\\n", "\n"),
+            "client_email": st.secrets["gcp_service_account"]["client_email"],
+            "client_id": st.secrets["gcp_service_account"]["client_id"],
+            "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
+            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
+            "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"],
+        }
 
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=scope
+        )
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
+
     except Exception as e:
         st.error(f"Verbindungsfehler: {e}")
+
+        # DEBUG: zeige was im private_key steckt
+        try:
+            key = st.secrets["gcp_service_account"]["private_key"]
+            st.code(f"Key Länge: {len(key)}")
+            st.code(f"Erste 60 Zeichen: {key[:60]}")
+            st.code(f"Letzte 60 Zeichen: {key[-60:]}")
+            st.code(f"Enthält \\\\n (escaped): {'\\\\n' in key}")
+            st.code(f"Enthält echte Newlines: {chr(10) in key}")
+        except Exception as e2:
+            st.error(f"Debug Fehler: {e2}")
+
         return None
 
 # --- SEITEN-KONFIGURATION ---
@@ -50,38 +77,28 @@ with st.form("jagd_form", clear_on_submit=True):
 
     submit = st.form_submit_button("💾 Eintrag speichern", use_container_width=True)
 
-# --- SPEICHERN ---
 if submit:
     sheet = connect_to_sheet()
     if sheet:
         try:
             with st.spinner("Speichere Eintrag..."):
-                sheet.append_row([
-                    str(datum),
-                    str(uhrzeit),
-                    wildart,
-                    str(kilogramm),
-                    notizen
-                ])
+                sheet.append_row([str(datum), str(uhrzeit), wildart, str(kilogramm), notizen])
             st.success("✅ Waidmannsheil! Eintrag gespeichert.")
             st.balloons()
         except Exception as e:
             st.error(f"Speicherfehler: {e}")
 
 st.divider()
-
-# --- LETZTE EINTRÄGE ---
 st.subheader("Letzte Erlegungen")
 
 sheet = connect_to_sheet()
 if sheet:
     try:
-        with st.spinner("Lade Daten..."):
-            data = sheet.get_all_records()
+        data = sheet.get_all_records()
         if data:
             df = pd.DataFrame(data)
             st.table(df.tail(5).iloc[::-1])
         else:
             st.info("Noch keine Einträge vorhanden.")
     except Exception as e:
-        st.error(f"Fehler beim Laden der Daten: {e}")
+        st.error(f"Fehler beim Laden: {e}")
